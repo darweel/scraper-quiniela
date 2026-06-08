@@ -12,28 +12,43 @@ app.use((req, res, next) => {
 
 async function scrapeQuiniela() {
   try {
-    const res = await fetch('https://www.notitimba.com/lots/', {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
+    const response = await fetch('https://www.notitimba.com/lots/', {
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'es-AR,es;q=0.9'
+      }
     });
-    const html = await res.text();
-    const $ = cheerio.load(html);
+    const html = await response.text();
+    const $ = cheerio.load(html, {decodeEntities: false});
     
-    const provincias = ['La Ciudad', 'La Provincia', 'Santa Fe', 'Córdoba', 'Entre Ríos'];
-    const sorteos = ['La Previa', 'Primera', 'Matutina', 'Vespertina', 'Nocturna'];
+    const provinciasObj = {
+      'Ciudad': 'Nacional',
+      'Provincia': 'Provincia', 
+      'Santa': 'Santa Fe',
+      'rdoba': 'Córdoba',
+      'R': 'Entre Ríos'
+    };
+    
+    const sorteos = ['La Previa','Primera','Matutina','Vespertina','Nocturna'];
     const resultado = {};
-    
-    const tablas = $('table');
-    tablas.each(function(i) {
+    sorteos.forEach(s => resultado[s] = {});
+
+    const tables = $('table');
+    tables.each(function(i) {
       if(i >= sorteos.length) return;
       const sorteo = sorteos[i];
-      resultado[sorteo] = {};
       $(this).find('tr').each(function() {
         const cols = $(this).find('td');
         if(cols.length >= 2) {
           const prov = $(cols[0]).text().trim();
           const num = $(cols[1]).text().trim();
-          if(provincias.some(p => prov.includes(p.split(' ')[1] || p)) && num.match(/^\d{4}$/)) {
-            resultado[sorteo][prov] = num;
+          if(num.match(/^\d{4}$/)) {
+            Object.keys(provinciasObj).forEach(key => {
+              if(prov.includes(key)) {
+                resultado[sorteo][provinciasObj[key]] = num;
+              }
+            });
           }
         }
       });
