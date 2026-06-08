@@ -13,39 +13,36 @@ app.use((req, res, next) => {
 async function scrapeQuiniela() {
   try {
     const response = await fetch('https://www.tujugada.com.ar/quiniela-de-hoy.asp', {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     });
     const html = await response.text();
     const $ = cheerio.load(html);
-    
+    const text = $('body').text().replace(/\s+/g, ' ');
+
     const resultado = {
       'La Previa': {}, 'Primera': {}, 'Matutina': {}, 'Vespertina': {}, 'Nocturna': {}
     };
-    
-    const sorteoMap = {
-      'Previa': 'La Previa', 'Primera': 'Primera',
-      'Matutina': 'Matutina', 'Vespertina': 'Vespertina', 'Nocturna': 'Nocturna'
-    };
-    
+
     const provMap = {
       'CIUDAD': 'Nacional', 'PROVINCIA': 'Provincia',
       'SANTA FE': 'Santa Fe', 'CORDOBA': 'Córdoba', 'ENTRE RIOS': 'Entre Ríos'
     };
 
-    $('table tr').each(function() {
-      const cells = $(this).find('td');
-      if(cells.length < 2) return;
-      const prov = $(cells[0]).text().trim().toUpperCase();
-      if(!provMap[prov]) return;
-      cells.each(function(i) {
-        if(i === 0) return;
-        const txt = $(this).text().trim();
-        const header = $('table tr').first().find('td').eq(i).text().trim();
-        Object.keys(sorteoMap).forEach(k => {
-          if(header.includes(k) && txt.match(/^\d{4}$/)) {
-            resultado[sorteoMap[k]][provMap[prov]] = txt;
-          }
-        });
+    const sorteoMap = {
+      'Previa': 'La Previa', 'Primera': 'Primera',
+      'Matutina': 'Matutina', 'Vespertina': 'Vespertina', 'Nocturna': 'Nocturna'
+    };
+
+    Object.keys(provMap).forEach(prov => {
+      const idx = text.indexOf(prov);
+      if(idx < 0) return;
+      const chunk = text.substring(idx, idx + 400);
+      Object.keys(sorteoMap).forEach(s => {
+        const sIdx = chunk.indexOf(s);
+        if(sIdx < 0) return;
+        const after = chunk.substring(sIdx + s.length, sIdx + s.length + 20);
+        const numMatch = after.match(/(\d{4})/);
+        if(numMatch) resultado[sorteoMap[s]][provMap[prov]] = numMatch[1];
       });
     });
 
