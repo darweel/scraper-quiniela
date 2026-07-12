@@ -6,6 +6,7 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "web-push": "^3.6.7",
     "express": "^4.18.2",
     "node-fetch": "^2.6.9",
     "cheerio": "^1.0.0-rc.12",
