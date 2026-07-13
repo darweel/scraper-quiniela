@@ -110,11 +110,12 @@ const SORTEO_APP = {
 function parsearQuinielaDeHoy(texto) {
   const resultado = {};
   Object.values(SORTEO_APP).forEach((s) => (resultado[s] = {}));
+  const textoUpper = texto.toUpperCase();
 
   const provNames = Object.keys(PROV_MAP);
   const posiciones = [];
   provNames.forEach(function (p) {
-    const idx = texto.indexOf(p);
+    const idx = textoUpper.indexOf(p);
     if (idx >= 0) posiciones.push({ nombre: p, idx: idx });
   });
   posiciones.sort((a, b) => a.idx - b.idx);
@@ -126,7 +127,7 @@ function parsearQuinielaDeHoy(texto) {
     const provApp = PROV_MAP[posiciones[i].nombre];
 
     SORTEOS.forEach(function (sorteoWeb) {
-      const re = new RegExp(sorteoWeb + '\\s+(\\d{2,4}|-+)');
+      const re = new RegExp(sorteoWeb + '\\s+(\\d{2,4}|-+)', 'i');
       const mm = bloque.match(re);
       if (mm && /^\d+$/.test(mm[1])) {
         resultado[SORTEO_APP[sorteoWeb]][provApp] = mm[1].padStart(4, '0');
