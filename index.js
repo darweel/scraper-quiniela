@@ -68,13 +68,15 @@ async function chequearYAvisar(sorteos) {
 
     for (const sorteo of Object.keys(sorteos)) {
       for (const prov of Object.keys(sorteos[sorteo])) {
-        const term = sorteos[sorteo][prov];
-        if (!term || !watchlist[term]) continue;
+        const numFull = sorteos[sorteo][prov];
+        if (!numFull) continue;
+        const term = numFull.slice(-2);
+        if (!watchlist[term]) continue;
 
         await db.ref('hits').push({
-          num: term, full: term, sorteo, prov, fecha, hora, ts: ahora.getTime()
+          num: term, full: numFull, sorteo, prov, fecha, hora, ts: ahora.getTime()
         });
-        await enviarPush('🏆 Coincidencia detectada', `El ${term} salió en ${sorteo} (${prov})`);
+        await enviarPush('🏆 Coincidencia detectada', `El ${numFull} salió en ${sorteo} (${prov})`);
       }
     }
   } catch (err) {
@@ -83,9 +85,9 @@ async function chequearYAvisar(sorteos) {
 }
 
 // ══════════════════════════════════════════════════════
-// EXTRACCIÓN REAL — ancorada al nombre de cada sorteo,
-// en vez de contar posiciones de números sueltos en la página
-// (la página muestra "CIUDAD: Nocturna el 28 (El cerro)..." )
+// EXTRACCIÓN REAL — desde la página que da el número
+// COMPLETO de 4 cifras por provincia y sorteo
+// (https://www.tujugada.com.ar/quiniela-de-hoy.asp)
 // ══════════════════════════════════════════════════════
 const PROV_MAP = {
   'CIUDAD': 'Nacional',
@@ -96,7 +98,8 @@ const PROV_MAP = {
   'ENTRE RIOS': 'Entre Ríos',
   'ENTRE RÍOS': 'Entre Ríos'
 };
-const SORTEO_MAP = {
+const SORTEOS = ['Previa', 'Primera', 'Matutina', 'Vespertina', 'Nocturna'];
+const SORTEO_APP = {
   'Previa': 'La Previa',
   'Primera': 'Primera',
   'Matutina': 'Matutina',
@@ -104,31 +107,29 @@ const SORTEO_MAP = {
   'Nocturna': 'Nocturna'
 };
 
-function parsearCabezas(textoCompleto) {
+function parsearQuinielaDeHoy(texto) {
   const resultado = {};
-  Object.values(SORTEO_MAP).forEach((s) => (resultado[s] = {}));
+  Object.values(SORTEO_APP).forEach((s) => (resultado[s] = {}));
 
-  // Tomar SOLO la primera sección "CABEZAS EN LAS QUINIELAS DEL ..."
-  // (la página lista el día actual primero, y después días anteriores completos;
-  //  si no cortamos acá, los datos de ayer pisan a los de hoy).
-  const partes = textoCompleto.split(/CABEZAS EN LAS QUINIELAS DEL/i);
-  if (partes.length < 2) return resultado; // no encontró el patrón esperado
-  const seccionHoy = partes[1]; // todo lo que sigue hasta la próxima ocurrencia (o fin)
+  const provNames = Object.keys(PROV_MAP);
+  const posiciones = [];
+  provNames.forEach(function (p) {
+    const idx = texto.indexOf(p);
+    if (idx >= 0) posiciones.push({ nombre: p, idx: idx });
+  });
+  posiciones.sort((a, b) => a.idx - b.idx);
 
-  const provNames = Object.keys(PROV_MAP).join('|');
-  const bloqueRegex = new RegExp('(' + provNames + '):\\s*([^.]*\\.)', 'g');
-  let m;
-  while ((m = bloqueRegex.exec(seccionHoy)) !== null) {
-    const provWeb = m[1];
-    const contenido = m[2];
-    const provApp = PROV_MAP[provWeb];
-    if (!provApp) continue;
+  for (let i = 0; i < posiciones.length; i++) {
+    const inicio = posiciones[i].idx;
+    const fin = i + 1 < posiciones.length ? posiciones[i + 1].idx : texto.length;
+    const bloque = texto.slice(inicio, fin);
+    const provApp = PROV_MAP[posiciones[i].nombre];
 
-    Object.keys(SORTEO_MAP).forEach(function (sorteoWeb) {
-      const re = new RegExp(sorteoWeb + '\\s+el\\s+(\\d{2})', 'i');
-      const mm = contenido.match(re);
-      if (mm) {
-        resultado[SORTEO_MAP[sorteoWeb]][provApp] = mm[1];
+    SORTEOS.forEach(function (sorteoWeb) {
+      const re = new RegExp(sorteoWeb + '\\s+(\\d{2,4}|-+)');
+      const mm = bloque.match(re);
+      if (mm && /^\d+$/.test(mm[1])) {
+        resultado[SORTEO_APP[sorteoWeb]][provApp] = mm[1].padStart(4, '0');
       }
     });
   }
@@ -137,14 +138,14 @@ function parsearCabezas(textoCompleto) {
 
 async function scrapeQuiniela() {
   try {
-    const response = await fetch('https://www.tujugada.com.ar', {
+    const response = await fetch('https://www.tujugada.com.ar/quiniela-de-hoy.asp', {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
     });
     const html = await response.text();
     const $ = cheerio.load(html);
     const text = $('body').text().replace(/\s+/g, ' ');
 
-    const sorteos = parsearCabezas(text);
+    const sorteos = parsearQuinielaDeHoy(text);
 
     // Guardar en Firebase
     await db.ref('resultados').set({
