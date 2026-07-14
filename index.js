@@ -176,4 +176,30 @@ app.get('/', async (req, res) => {
   }
 });
 
+app.get('/debug', async (req, res) => {
+  try {
+    const response = await fetch('https://www.tujugada.com.ar/quiniela-de-hoy.asp', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+    });
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const text = $('body').text().replace(/\s+/g, ' ');
+
+    res.json({
+      status: response.status,
+      htmlLength: html.length,
+      textLength: text.length,
+      contieneResultadosDel: text.includes('Resultados del'),
+      contieneCIUDAD: text.toUpperCase().includes('CIUDAD'),
+      primeros500: text.slice(0, 500),
+      alrededorDeResultados: (function () {
+        const idx = text.indexOf('Resultados del');
+        return idx >= 0 ? text.slice(idx, idx + 300) : 'NO ENCONTRADO';
+      })()
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => console.log('Puerto ' + PORT));
