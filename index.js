@@ -96,7 +96,8 @@ const PROV_MAP = {
   'CORDOBA': 'Córdoba',
   'CÓRDOBA': 'Córdoba',
   'ENTRE RIOS': 'Entre Ríos',
-  'ENTRE RÍOS': 'Entre Ríos'
+  'ENTRE RÍOS': 'Entre Ríos',
+  'URUGUAY': 'Uruguay'
 };
 const SORTEOS = ['Previa', 'Primera', 'Matutina', 'Vespertina', 'Nocturna'];
 const SORTEO_APP = {
