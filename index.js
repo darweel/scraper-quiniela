@@ -110,7 +110,12 @@ const SORTEO_APP = {
 function parsearQuinielaDeHoy(texto) {
   const resultado = {};
   Object.values(SORTEO_APP).forEach((s) => (resultado[s] = {}));
-  const textoUpper = texto.toUpperCase();
+
+  const marcador = texto.indexOf('Resultados del');
+  if (marcador < 0) return resultado;
+  const finHoy = texto.indexOf('Resultados del', marcador + 1);
+  const textoResultados = finHoy > 0 ? texto.slice(marcador, finHoy) : texto.slice(marcador);
+  const textoUpper = textoResultados.toUpperCase();
 
   const provNames = Object.keys(PROV_MAP);
   const posiciones = [];
@@ -122,8 +127,8 @@ function parsearQuinielaDeHoy(texto) {
 
   for (let i = 0; i < posiciones.length; i++) {
     const inicio = posiciones[i].idx;
-    const fin = i + 1 < posiciones.length ? posiciones[i + 1].idx : texto.length;
-    const bloque = texto.slice(inicio, fin);
+    const fin = i + 1 < posiciones.length ? posiciones[i + 1].idx : textoResultados.length;
+    const bloque = textoResultados.slice(inicio, fin);
     const provApp = PROV_MAP[posiciones[i].nombre];
 
     SORTEOS.forEach(function (sorteoWeb) {
@@ -148,13 +153,11 @@ async function scrapeQuiniela() {
 
     const sorteos = parsearQuinielaDeHoy(text);
 
-    // Guardar en Firebase
     await db.ref('resultados').set({
       data: sorteos,
       timestamp: Date.now()
     });
 
-    // Avisar si algo de la watchlist salió
     await chequearYAvisar(sorteos);
 
     return sorteos;
