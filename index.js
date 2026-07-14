@@ -21,6 +21,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// ══════════════════════════════════════════════════════
+// WEB PUSH — avisos con la app cerrada
+// ══════════════════════════════════════════════════════
 webpush.setVapidDetails(
   'mailto:darweelt@gmail.com',
   process.env.VAPID_PUBLIC_KEY,
@@ -81,6 +84,11 @@ async function chequearYAvisar(sorteos) {
   }
 }
 
+// ══════════════════════════════════════════════════════
+// EXTRACCIÓN REAL — desde la página que da el número
+// COMPLETO de 4 cifras por provincia y sorteo
+// (https://www.tujugada.com.ar/quiniela-de-hoy.asp)
+// ══════════════════════════════════════════════════════
 const PROV_MAP = {
   'CIUDAD': 'Nacional',
   'PROVINCIA': 'Provincia',
@@ -124,7 +132,7 @@ function parsearQuinielaDeHoy(texto) {
     const provApp = PROV_MAP[posiciones[i].nombre];
 
     SORTEOS.forEach(function (sorteoWeb) {
-      const re = new RegExp(sorteoWeb + '\\s+(\\d{2,4}|-+)', 'i');
+      const re = new RegExp(sorteoWeb + '\\s*(\\d{2,4}|-+)', 'i');
       const mm = bloque.match(re);
       if (mm && /^\d+$/.test(mm[1])) {
         resultado[SORTEO_APP[sorteoWeb]][provApp] = mm[1].padStart(4, '0');
@@ -175,6 +183,9 @@ app.get('/', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════
+// DEBUG — ver exactamente qué está recibiendo el scraper
+// ══════════════════════════════════════════════════════
 app.get('/debug', async (req, res) => {
   try {
     const response = await fetch('https://www.tujugada.com.ar/quiniela-de-hoy.asp', {
