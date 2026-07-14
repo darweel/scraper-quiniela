@@ -21,9 +21,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ══════════════════════════════════════════════════════
-// WEB PUSH — avisos con la app cerrada
-// ══════════════════════════════════════════════════════
 webpush.setVapidDetails(
   'mailto:darweelt@gmail.com',
   process.env.VAPID_PUBLIC_KEY,
@@ -84,11 +81,6 @@ async function chequearYAvisar(sorteos) {
   }
 }
 
-// ══════════════════════════════════════════════════════
-// EXTRACCIÓN REAL — desde la página que da el número
-// COMPLETO de 4 cifras por provincia y sorteo
-// (https://www.tujugada.com.ar/quiniela-de-hoy.asp)
-// ══════════════════════════════════════════════════════
 const PROV_MAP = {
   'CIUDAD': 'Nacional',
   'PROVINCIA': 'Provincia',
@@ -153,12 +145,19 @@ async function scrapeQuiniela() {
 
     const sorteos = parsearQuinielaDeHoy(text);
 
-    await db.ref('resultados').set({
-      data: sorteos,
-      timestamp: Date.now()
-    });
+    const tieneAlgunDato = Object.values(sorteos).some(
+      (prov) => Object.keys(prov).length > 0
+    );
 
-    await chequearYAvisar(sorteos);
+    if (tieneAlgunDato) {
+      await db.ref('resultados').set({
+        data: sorteos,
+        timestamp: Date.now()
+      });
+      await chequearYAvisar(sorteos);
+    } else {
+      console.log('Scrape vacío, no se pisan los datos anteriores.');
+    }
 
     return sorteos;
   } catch (err) {
