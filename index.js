@@ -85,21 +85,17 @@ async function chequearYAvisar(sorteos) {
 }
 
 // ══════════════════════════════════════════════════════
-// EXTRACCIÓN REAL — desde la página que da el número
-// COMPLETO de 4 cifras por provincia y sorteo
-// (https://www.tujugada.com.ar/quiniela-de-hoy.asp)
+// EXTRACCIÓN REAL — una página por provincia, con el
+// extracto completo de 20 números por sorteo
 // ══════════════════════════════════════════════════════
-const PROV_MAP = {
-  'CIUDAD': 'Nacional',
-  'PROVINCIA': 'Provincia',
-  'SANTA FE': 'Santa Fe',
-  'CORDOBA': 'Córdoba',
-  'CÓRDOBA': 'Córdoba',
-  'ENTRE RIOS': 'Entre Ríos',
-  'ENTRE RÍOS': 'Entre Ríos',
-  'URUGUAY': 'Uruguay'
+const PROV_URLS = {
+  'Nacional':   'https://www.tujugada.com.ar/quiniela-nacional.asp',
+  'Provincia':  'https://www.tujugada.com.ar/quiniela_provincia_buenos_aires.asp',
+  'Santa Fe':   'https://www.tujugada.com.ar/quiniela_santa_fe.asp',
+  'Córdoba':    'https://www.tujugada.com.ar/quiniela_cordoba.asp',
+  'Entre Ríos': 'https://www.tujugada.com.ar/quiniela_entre_rios.asp'
 };
-const SORTEOS = ['Previa', 'Primera', 'Matutina', 'Vespertina', 'Nocturna'];
+
 const SORTEO_APP = {
   'Previa': 'La Previa',
   'Primera': 'Primera',
@@ -108,109 +104,148 @@ const SORTEO_APP = {
   'Nocturna': 'Nocturna'
 };
 
-function parsearQuinielaDeHoy(texto) {
-  const resultado = {};
-  Object.values(SORTEO_APP).forEach((s) => (resultado[s] = {}));
+// Header de cada bloque de sorteo en la página, ej:
+// "martes 28/7/2026 - Primera 12:00 hs. 52 - La Madre"
+const HEADER_RE = /(Previa|Primera|Matutina|Vespertina|Nocturna)\s*\d{1,2}:\d{2}\s*hs\./gi;
 
-  const marcador = texto.indexOf('Resultados del');
-  if (marcador < 0) return resultado;
-  const finHoy = texto.indexOf('Resultados del', marcador + 1);
-  const textoResultados = finHoy > 0 ? texto.slice(marcador, finHoy) : texto.slice(marcador);
-  const textoUpper = textoResultados.toUpperCase();
-
-  const provNames = Object.keys(PROV_MAP);
-  const posiciones = [];
-  provNames.forEach(function (p) {
-    const idx = textoUpper.indexOf(p);
-    if (idx >= 0) posiciones.push({ nombre: p, idx: idx });
-  });
-  posiciones.sort((a, b) => a.idx - b.idx);
-
-  for (let i = 0; i < posiciones.length; i++) {
-    const inicio = posiciones[i].idx;
-    const fin = i + 1 < posiciones.length ? posiciones[i + 1].idx : textoResultados.length;
-    const bloque = textoResultados.slice(inicio, fin);
-    const provApp = PROV_MAP[posiciones[i].nombre];
-
-    SORTEOS.forEach(function (sorteoWeb) {
-      const re = new RegExp(sorteoWeb + '\\s*(\\d{2,4}|-+)', 'i');
-      const mm = bloque.match(re);
-      if (mm && /^\d+$/.test(mm[1])) {
-        resultado[SORTEO_APP[sorteoWeb]][provApp] = mm[1].padStart(4, '0');
-      }
-    });
+// Reordena los 20 números extraídos en orden de aparición del texto
+// (que van intercalados: Ubic1,Ubic11,Ubic2,Ubic12,...) al orden real Ubic 1..20
+function reordenarUbicaciones(numsEnOrdenDeTexto) {
+  if (numsEnOrdenDeTexto.length !== 20) return numsEnOrdenDeTexto; // fallback: no se puede reordenar con certeza
+  const real = new Array(20);
+  for (let i = 0; i < 10; i++) {
+    real[i] = numsEnOrdenDeTexto[2 * i];       // Ubic (i+1)
+    real[i + 10] = numsEnOrdenDeTexto[2 * i + 1]; // Ubic (i+11)
   }
-  return resultado;
+  return real;
 }
 
-async function scrapeQuiniela() {
+function parsearPaginaProvincia(texto, provApp, resultado) {
+  // Solo nos interesan los sorteos de HOY: la página lista hoy primero
+  // y después "Quinielas del [dia anterior]" — cortamos ahí.
+  const finHoy = texto.search(/Quinielas del/i);
+  const textoHoy = finHoy >= 0 ? texto.slice(0, finHoy) : texto;
+
+  const matches = [...textoHoy.matchAll(HEADER_RE)];
+  for (let i = 0; i < matches.length; i++) {
+    const sorteoWeb = matches[i][1];
+    // clave de deduplicación: nos quedamos con la PRIMERA aparición de cada
+    // sorteo (la página lista hoy en orden del más reciente al más viejo,
+    // así que la primera vez que aparece "Primera" hoy es la de hoy).
+    const sorteoAppKey = SORTEO_APP[
+      Object.keys(SORTEO_APP).find((k) => k.toLowerCase() === sorteoWeb.toLowerCase())
+    ];
+    if (!sorteoAppKey) continue;
+    if (resultado[sorteoAppKey][provApp]) continue; // ya lo tenemos (evita pisar con datos viejos)
+
+    const inicioBloque = matches[i].index + matches[i][0].length;
+    const finBloque = i + 1 < matches.length ? matches[i + 1].index : textoHoy.length;
+    const bloque = textoHoy.slice(inicioBloque, finBloque);
+
+    // Los Ubic van de 1 a 20 (1-2 cifras); los resultados son siempre 4 cifras.
+    // Esto ignora automáticamente el mensaje anti-copia que Tujugada mete
+    // en la posición 2 de cada tabla, porque ese texto no contiene números de 4 cifras.
+    // .slice(0,20): a veces el bloque se extiende hasta la fecha del próximo
+    // encabezado ("martes 28/7/2026 - ..."), y el año (4 cifras) se colaría
+    // como un número 21 falso si no lo cortamos acá.
+    const numeros = (bloque.match(/\b\d{4}\b/g) || []).slice(0, 20);
+    if (numeros.length === 0) continue;
+
+    const ordenados = reordenarUbicaciones(numeros);
+    resultado[sorteoAppKey][provApp] = {
+      cabeza: ordenados[0],       // compatibilidad con el formato viejo (1 solo número)
+      extracto: ordenados         // array de 20 números en orden real de Ubicación
+    };
+  }
+}
+
+async function scrapearProvincia(provApp, url, resultado) {
   try {
-    const response = await fetch('https://www.tujugada.com.ar/quiniela-de-hoy.asp', {
+    const response = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
     });
     const html = await response.text();
     const $ = cheerio.load(html);
     const text = $('body').text().replace(/\s+/g, ' ');
-
-    const sorteos = parsearQuinielaDeHoy(text);
-
-    const tieneAlgunDato = Object.values(sorteos).some(
-      (prov) => Object.keys(prov).length > 0
-    );
-
-    if (tieneAlgunDato) {
-      await db.ref('resultados').set({
-        data: sorteos,
-        timestamp: Date.now()
-      });
-      await chequearYAvisar(sorteos);
-    } else {
-      console.log('Scrape vacío, no se pisan los datos anteriores.');
-    }
-
-    return sorteos;
+    parsearPaginaProvincia(text, provApp, resultado);
   } catch (err) {
-    console.error('Error scraping:', err);
-    return null;
+    console.error(`Error scrapeando ${provApp} (${url}):`, err.message);
   }
+}
+
+async function scrapeQuiniela() {
+  const resultado = {};
+  Object.values(SORTEO_APP).forEach((s) => (resultado[s] = {}));
+
+  await Promise.all(
+    Object.entries(PROV_URLS).map(([provApp, url]) => scrapearProvincia(provApp, url, resultado))
+  );
+
+  // Separamos en dos formatos para no romper nada de lo que ya lee el front-end:
+  // - dataCabezas: mismo formato viejo, 1 número de 4 cifras por sorteo/provincia
+  // - dataExtractos: array de 20 números por sorteo/provincia
+  const dataCabezas = {};
+  const dataExtractos = {};
+  Object.entries(resultado).forEach(([sorteo, provincias]) => {
+    dataCabezas[sorteo] = {};
+    dataExtractos[sorteo] = {};
+    Object.entries(provincias).forEach(([prov, info]) => {
+      dataCabezas[sorteo][prov] = info.cabeza;
+      dataExtractos[sorteo][prov] = info.extracto;
+    });
+  });
+
+  const tieneAlgunDato = Object.values(dataCabezas).some(
+    (prov) => Object.keys(prov).length > 0
+  );
+
+  if (tieneAlgunDato) {
+    await db.ref('resultados').set({ data: dataCabezas, timestamp: Date.now() });
+    await db.ref('extractos').set({ data: dataExtractos, timestamp: Date.now() });
+    await chequearYAvisar(dataCabezas);
+  } else {
+    console.log('Scrape vacío, no se pisan los datos anteriores.');
+  }
+
+  return { cabezas: dataCabezas, extractos: dataExtractos };
 }
 
 app.get('/', async (req, res) => {
   const data = await scrapeQuiniela();
   if (data) {
-    res.json({ ok: true, data });
+    res.json({ ok: true, data: data.cabezas, extractos: data.extractos });
   } else {
     res.status(500).json({ ok: false, error: 'Error al scrapear' });
   }
 });
 
 // ══════════════════════════════════════════════════════
-// DEBUG — ver exactamente qué está recibiendo el scraper
+// DEBUG — ver exactamente qué está trayendo el scraper
+// de cada provincia
 // ══════════════════════════════════════════════════════
 app.get('/debug', async (req, res) => {
-  try {
-    const response = await fetch('https://www.tujugada.com.ar/quiniela-de-hoy.asp', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-    });
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    const text = $('body').text().replace(/\s+/g, ' ');
-
-    res.json({
-      status: response.status,
-      htmlLength: html.length,
-      textLength: text.length,
-      contieneResultadosDel: text.includes('Resultados del'),
-      contieneCIUDAD: text.toUpperCase().includes('CIUDAD'),
-      primeros500: text.slice(0, 500),
-      alrededorDeResultados: (function () {
-        const idx = text.indexOf('Resultados del');
-        return idx >= 0 ? text.slice(idx, idx + 300) : 'NO ENCONTRADO';
-      })()
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  const salida = {};
+  for (const [provApp, url] of Object.entries(PROV_URLS)) {
+    try {
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+      });
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      const text = $('body').text().replace(/\s+/g, ' ');
+      const finHoy = text.search(/Quinielas del/i);
+      salida[provApp] = {
+        status: response.status,
+        textLength: text.length,
+        contieneHeader: HEADER_RE.test(text),
+        primeros500: text.slice(0, 500),
+        recorteHoy: (finHoy >= 0 ? text.slice(0, finHoy) : text).slice(0, 800)
+      };
+    } catch (err) {
+      salida[provApp] = { error: err.message };
+    }
   }
+  res.json(salida);
 });
 
 app.listen(PORT, () => console.log('Puerto ' + PORT));
