@@ -85,77 +85,62 @@ async function chequearYAvisar(sorteos) {
 }
 
 // ══════════════════════════════════════════════════════
-// EXTRACCIÓN REAL — una página por provincia, con el
-// extracto completo de 20 números por sorteo
+// EXTRACCIÓN REAL — Viví tu Suerte: una página por PROVINCIA
+// (vivitusuerte.com/pizarra/<slug>), con los 5 turnos y el
+// extracto completo de 20 números para cada uno. Cubre 22
+// jurisdicciones (antes solo teníamos 6 con Jugando Online).
 // ══════════════════════════════════════════════════════
 const PROV_URLS = {
-  'Nacional':   'https://www.tujugada.com.ar/quiniela-nacional.asp',
-  'Provincia':  'https://www.tujugada.com.ar/quiniela_provincia_buenos_aires.asp',
-  'Santa Fe':   'https://www.tujugada.com.ar/quiniela_santa_fe.asp',
-  'Córdoba':    'https://www.tujugada.com.ar/quiniela_cordoba.asp',
-  'Entre Ríos': 'https://www.tujugada.com.ar/quiniela_entre_rios.asp'
+  'Nacional':   'https://vivitusuerte.com/pizarra/ciudad',
+  'Provincia':  'https://vivitusuerte.com/pizarra/provincia',
+  'Córdoba':    'https://vivitusuerte.com/pizarra/cordoba',
+  'Santa Fe':   'https://vivitusuerte.com/pizarra/santa+fe',
+  'Entre Ríos': 'https://vivitusuerte.com/pizarra/entre+rios',
+  'Uruguay':    'https://vivitusuerte.com/pizarra/montevideo',
+  'Mendoza':    'https://vivitusuerte.com/pizarra/mendoza',
+  'Corrientes': 'https://vivitusuerte.com/pizarra/corrientes',
+  'Chaco':      'https://vivitusuerte.com/pizarra/chaco',
+  'Santiago':   'https://vivitusuerte.com/pizarra/santiago',
+  'Neuquén':    'https://vivitusuerte.com/pizarra/neuquen',
+  'San Luis':   'https://vivitusuerte.com/pizarra/san+luis',
+  'Salta':      'https://vivitusuerte.com/pizarra/salta',
+  'Jujuy':      'https://vivitusuerte.com/pizarra/jujuy',
+  'Tucumán':    'https://vivitusuerte.com/pizarra/tucuman',
+  'Chubut':     'https://vivitusuerte.com/pizarra/chubut',
+  'Formosa':    'https://vivitusuerte.com/pizarra/formosa',
+  'Misiones':   'https://vivitusuerte.com/pizarra/misiones',
+  'Catamarca':  'https://vivitusuerte.com/pizarra/catamarca',
+  'San Juan':   'https://vivitusuerte.com/pizarra/san+juan',
+  'La Rioja':   'https://vivitusuerte.com/pizarra/la+rioja',
+  'Río Negro':  'https://vivitusuerte.com/pizarra/rio+negro'
 };
 
-const SORTEO_APP = {
-  'Previa': 'La Previa',
-  'Primera': 'Primera',
-  'Matutina': 'Matutina',
-  'Vespertina': 'Vespertina',
-  'Nocturna': 'Nocturna'
-};
-
-// Header de cada bloque de sorteo en la página, ej:
-// "martes 28/7/2026 - Primera 12:00 hs. 52 - La Madre"
-const HEADER_RE = /(Previa|Primera|Matutina|Vespertina|Nocturna)\s*\d{1,2}:\d{2}\s*hs\./gi;
-
-// Reordena los 20 números extraídos en orden de aparición del texto
-// (que van intercalados: Ubic1,Ubic11,Ubic2,Ubic12,...) al orden real Ubic 1..20
-function reordenarUbicaciones(numsEnOrdenDeTexto) {
-  if (numsEnOrdenDeTexto.length !== 20) return numsEnOrdenDeTexto; // fallback: no se puede reordenar con certeza
-  const real = new Array(20);
-  for (let i = 0; i < 10; i++) {
-    real[i] = numsEnOrdenDeTexto[2 * i];       // Ubic (i+1)
-    real[i + 10] = numsEnOrdenDeTexto[2 * i + 1]; // Ubic (i+11)
-  }
-  return real;
-}
+const SORTEO_NAMES = ['La Previa', 'Primera', 'Matutina', 'Vespertina', 'Nocturna'];
+const HEADER_RE = new RegExp('(' + SORTEO_NAMES.join('|') + ')', 'g');
+// "1. 1206" / "11. 1782" — posición + número de 4 cifras. Los sorteos que
+// todavía no salieron muestran "----" en vez de un número, y esa posición
+// simplemente no matchea (no hace falta filtrarla a mano).
+const POS_NUM_RE = /(\d{1,2})\.\s*(\d{4})\b/g;
 
 function parsearPaginaProvincia(texto, provApp, resultado) {
-  // Solo nos interesan los sorteos de HOY: la página lista hoy primero
-  // y después "Quinielas del [dia anterior]" — cortamos ahí.
-  const finHoy = texto.search(/Quinielas del/i);
-  const textoHoy = finHoy >= 0 ? texto.slice(0, finHoy) : texto;
-
-  const matches = [...textoHoy.matchAll(HEADER_RE)];
+  const matches = [...texto.matchAll(HEADER_RE)];
   for (let i = 0; i < matches.length; i++) {
-    const sorteoWeb = matches[i][1];
-    // clave de deduplicación: nos quedamos con la PRIMERA aparición de cada
-    // sorteo (la página lista hoy en orden del más reciente al más viejo,
-    // así que la primera vez que aparece "Primera" hoy es la de hoy).
-    const sorteoAppKey = SORTEO_APP[
-      Object.keys(SORTEO_APP).find((k) => k.toLowerCase() === sorteoWeb.toLowerCase())
-    ];
-    if (!sorteoAppKey) continue;
-    if (resultado[sorteoAppKey][provApp]) continue; // ya lo tenemos (evita pisar con datos viejos)
+    const sorteo = matches[i][1];
+    if (resultado[sorteo][provApp]) continue; // ya lo tenemos (primera aparición = hoy)
 
-    const inicioBloque = matches[i].index + matches[i][0].length;
-    const finBloque = i + 1 < matches.length ? matches[i + 1].index : textoHoy.length;
-    const bloque = textoHoy.slice(inicioBloque, finBloque);
+    const inicio = matches[i].index + matches[i][0].length;
+    const fin = i + 1 < matches.length ? matches[i + 1].index : texto.length;
+    const bloque = texto.slice(inicio, fin);
 
-    // Los Ubic van de 1 a 20 (1-2 cifras); los resultados son siempre 4 cifras.
-    // Esto ignora automáticamente el mensaje anti-copia que Tujugada mete
-    // en la posición 2 de cada tabla, porque ese texto no contiene números de 4 cifras.
-    // .slice(0,20): a veces el bloque se extiende hasta la fecha del próximo
-    // encabezado ("martes 28/7/2026 - ..."), y el año (4 cifras) se colaría
-    // como un número 21 falso si no lo cortamos acá.
-    const numeros = (bloque.match(/\b\d{4}\b/g) || []).slice(0, 20);
-    if (numeros.length === 0) continue;
+    const pares = [...bloque.matchAll(POS_NUM_RE)];
+    const arr = new Array(20).fill(null);
+    for (const [, posStr, num] of pares) {
+      const pos = parseInt(posStr, 10);
+      if (pos >= 1 && pos <= 20) arr[pos - 1] = num;
+    }
+    if (arr[0] === null) continue; // sin cabeza todavía, no hay nada real que guardar
 
-    const ordenados = reordenarUbicaciones(numeros);
-    resultado[sorteoAppKey][provApp] = {
-      cabeza: ordenados[0],       // compatibilidad con el formato viejo (1 solo número)
-      extracto: ordenados         // array de 20 números en orden real de Ubicación
-    };
+    resultado[sorteo][provApp] = { cabeza: arr[0], extracto: arr };
   }
 }
 
@@ -179,15 +164,12 @@ async function scrapearProvincia(provApp, url, resultado) {
 
 async function scrapeQuiniela() {
   const resultado = {};
-  Object.values(SORTEO_APP).forEach((s) => (resultado[s] = {}));
+  SORTEO_NAMES.forEach((s) => (resultado[s] = {}));
 
   await Promise.all(
     Object.entries(PROV_URLS).map(([provApp, url]) => scrapearProvincia(provApp, url, resultado))
   );
 
-  // Separamos en dos formatos para no romper nada de lo que ya lee el front-end:
-  // - dataCabezas: mismo formato viejo, 1 número de 4 cifras por sorteo/provincia
-  // - dataExtractos: array de 20 números por sorteo/provincia
   const dataCabezas = {};
   const dataExtractos = {};
   Object.entries(resultado).forEach(([sorteo, provincias]) => {
@@ -224,8 +206,7 @@ app.get('/', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════
-// DEBUG — ver exactamente qué está trayendo el scraper
-// de cada provincia
+// DEBUG
 // ══════════════════════════════════════════════════════
 app.get('/debug', async (req, res) => {
   const salida = {};
@@ -235,20 +216,17 @@ app.get('/debug', async (req, res) => {
       const html = await response.text();
       const $ = cheerio.load(html);
       const text = $('body').text().replace(/\s+/g, ' ');
-      const finHoy = text.search(/Quinielas del/i);
-      const textoHoy = finHoy >= 0 ? text.slice(0, finHoy) : text;
-      const matches = [...textoHoy.matchAll(HEADER_RE)];
+      const matches = [...text.matchAll(HEADER_RE)];
 
       salida[provApp] = {
         status: response.status,
         textLength: text.length,
-        cortoEnQuinielasDel: finHoy >= 0,
-        sorteosDeHoyEncontrados: matches.length,
+        sorteosEncontrados: matches.length,
         titulosEncontrados: matches.map((m) => m[0]),
         contextoPrimerSorteo: matches.length
-          ? textoHoy.slice(matches[0].index, matches[0].index + 400)
+          ? text.slice(matches[0].index, matches[0].index + 200)
           : null,
-        finalDeTextoHoy: matches.length === 0 ? textoHoy.slice(-800) : null
+        finalDeTexto: matches.length === 0 ? text.slice(-800) : null
       };
     } catch (err) {
       salida[provApp] = { error: err.message };
@@ -257,4 +235,4 @@ app.get('/debug', async (req, res) => {
   res.json(salida);
 });
 
-app.listen(PORT, () => console.log('Puerto ' + PORT));
+app.listen(PORT, () => console.log('Puerto ' + PORT));    
