@@ -159,11 +159,15 @@ function parsearPaginaProvincia(texto, provApp, resultado) {
   }
 }
 
+const FETCH_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  'Accept-Language': 'es-AR,es;q=0.9',
+};
+
 async function scrapearProvincia(provApp, url, resultado) {
   try {
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-    });
+    const response = await fetch(url, { headers: FETCH_HEADERS });
     const html = await response.text();
     const $ = cheerio.load(html);
     const text = $('body').text().replace(/\s+/g, ' ');
@@ -227,19 +231,24 @@ app.get('/debug', async (req, res) => {
   const salida = {};
   for (const [provApp, url] of Object.entries(PROV_URLS)) {
     try {
-      const response = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-      });
+      const response = await fetch(url, { headers: FETCH_HEADERS });
       const html = await response.text();
       const $ = cheerio.load(html);
       const text = $('body').text().replace(/\s+/g, ' ');
       const finHoy = text.search(/Quinielas del/i);
+      const textoHoy = finHoy >= 0 ? text.slice(0, finHoy) : text;
+      const matches = [...textoHoy.matchAll(HEADER_RE)];
+
       salida[provApp] = {
         status: response.status,
         textLength: text.length,
-        contieneHeader: HEADER_RE.test(text),
-        primeros500: text.slice(0, 500),
-        recorteHoy: (finHoy >= 0 ? text.slice(0, finHoy) : text).slice(0, 800)
+        cortoEnQuinielasDel: finHoy >= 0,
+        sorteosDeHoyEncontrados: matches.length,
+        titulosEncontrados: matches.map((m) => m[0]),
+        contextoPrimerSorteo: matches.length
+          ? textoHoy.slice(matches[0].index, matches[0].index + 400)
+          : null,
+        finalDeTextoHoy: matches.length === 0 ? textoHoy.slice(-800) : null
       };
     } catch (err) {
       salida[provApp] = { error: err.message };
