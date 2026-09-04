@@ -85,6 +85,71 @@ async function chequearYAvisar(sorteos) {
 }
 
 // ══════════════════════════════════════════════════════
+// MOTOR NUEVO (Señales Pro Engine v2, en Render) — cada vez
+// que aparece un resultado nuevo se lo avisamos para que
+// pueda descartarlo de las sugerencias de voz del día.
+// Configurar MOTOR_URL en las variables de entorno de Render.
+// Si no está seteada, el scraper sigue funcionando igual,
+// solo que sin avisarle al motor nuevo (no rompe nada viejo).
+// ══════════════════════════════════════════════════════
+const MOTOR_URL = process.env.MOTOR_URL || null;
+let previoCabezas = {}; // snapshot del último scrape, para detectar qué es realmente nuevo
+let diaActual = new Date().toLocaleDateString('es-AR');
+
+function tipoParaMotor(sorteoApp) {
+  // Nombres del scraper -> nombres que espera el motor (sin espacios, sin tildes)
+  const mapa = {
+    'La Previa': 'la_previa',
+    'Primera': 'primera',
+    'Matutina': 'matutina',
+    'Vespertina': 'vespertina',
+    'Nocturna': 'nocturna',
+  };
+  return mapa[sorteoApp] || sorteoApp.toLowerCase();
+}
+
+async function avisarleAlMotorSiHayNuevos(dataCabezas) {
+  if (!MOTOR_URL) return;
+
+  const hoy = new Date().toLocaleDateString('es-AR');
+  if (hoy !== diaActual) {
+    // Cambió el día — arrancamos de cero para el motor también
+    diaActual = hoy;
+    previoCabezas = {};
+    try {
+      await fetch(`${MOTOR_URL}/api/reset-dia`, { method: 'POST' });
+    } catch (err) {
+      console.error('Error avisando reset-dia al motor:', err.message);
+    }
+  }
+
+  for (const [sorteo, provincias] of Object.entries(dataCabezas)) {
+    for (const [prov, numFull] of Object.entries(provincias)) {
+      if (!numFull) continue;
+      const key = `${sorteo}|${prov}`;
+      if (previoCabezas[key] === numFull) continue; // ya lo habíamos avisado
+
+      previoCabezas[key] = numFull;
+      const termino = numFull.slice(-2);
+
+      try {
+        await fetch(`${MOTOR_URL}/api/resultado-nuevo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fecha: hoy,
+            tipo: tipoParaMotor(sorteo),
+            numeros: [termino],
+          }),
+        });
+      } catch (err) {
+        console.error(`Error avisando al motor (${sorteo}/${prov}):`, err.message);
+      }
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════
 // EXTRACCIÓN REAL — Viví tu Suerte: una página por PROVINCIA
 // (vivitusuerte.com/pizarra/<slug>), con los 5 turnos y el
 // extracto completo de 20 números para cada uno. Cubre 22
@@ -189,6 +254,7 @@ async function scrapeQuiniela() {
     await db.ref('resultados').set({ data: dataCabezas, timestamp: Date.now() });
     await db.ref('extractos').set({ data: dataExtractos, timestamp: Date.now() });
     await chequearYAvisar(dataCabezas);
+    await avisarleAlMotorSiHayNuevos(dataCabezas);
   } else {
     console.log('Scrape vacío, no se pisan los datos anteriores.');
   }
@@ -235,4 +301,4 @@ app.get('/debug', async (req, res) => {
   res.json(salida);
 });
 
-app.listen(PORT, () => console.log('Puerto ' + PORT));    
+app.listen(PORT, () => console.log('Puerto ' + PORT));
