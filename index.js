@@ -21,9 +21,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ══════════════════════════════════════════════════════
-// WEB PUSH — avisos con la app cerrada
-// ══════════════════════════════════════════════════════
 webpush.setVapidDetails(
   'mailto:darweelt@gmail.com',
   process.env.VAPID_PUBLIC_KEY,
@@ -76,7 +73,7 @@ async function chequearYAvisar(sorteos) {
         await db.ref('hits').push({
           num: term, full: numFull, sorteo, prov, fecha, hora, ts: ahora.getTime()
         });
-        await enviarPush('🏆 Coincidencia detectada', `El ${numFull} salió en ${sorteo} (${prov})`);
+        await enviarPush('Coincidencia detectada', `El ${numFull} salio en ${sorteo} (${prov})`);
       }
     }
   } catch (err) {
@@ -84,20 +81,11 @@ async function chequearYAvisar(sorteos) {
   }
 }
 
-// ══════════════════════════════════════════════════════
-// MOTOR NUEVO (Señales Pro Engine v2, en Render) — cada vez
-// que aparece un resultado nuevo se lo avisamos para que
-// pueda descartarlo de las sugerencias de voz del día.
-// Configurar MOTOR_URL en las variables de entorno de Render.
-// Si no está seteada, el scraper sigue funcionando igual,
-// solo que sin avisarle al motor nuevo (no rompe nada viejo).
-// ══════════════════════════════════════════════════════
 const MOTOR_URL = process.env.MOTOR_URL || null;
-let previoCabezas = {}; // snapshot del último scrape, para detectar qué es realmente nuevo
+let previoCabezas = {};
 let diaActual = new Date().toLocaleDateString('es-AR');
 
 function tipoParaMotor(sorteoApp) {
-  // Nombres del scraper -> nombres que espera el motor (sin espacios, sin tildes)
   const mapa = {
     'La Previa': 'la_previa',
     'Primera': 'primera',
@@ -113,7 +101,6 @@ async function avisarleAlMotorSiHayNuevos(dataCabezas) {
 
   const hoy = new Date().toLocaleDateString('es-AR');
   if (hoy !== diaActual) {
-    // Cambió el día — arrancamos de cero para el motor también
     diaActual = hoy;
     previoCabezas = {};
     try {
@@ -127,7 +114,7 @@ async function avisarleAlMotorSiHayNuevos(dataCabezas) {
     for (const [prov, numFull] of Object.entries(provincias)) {
       if (!numFull) continue;
       const key = `${sorteo}|${prov}`;
-      if (previoCabezas[key] === numFull) continue; // ya lo habíamos avisado
+      if (previoCabezas[key] === numFull) continue;
 
       previoCabezas[key] = numFull;
       const termino = numFull.slice(-2);
@@ -149,49 +136,40 @@ async function avisarleAlMotorSiHayNuevos(dataCabezas) {
   }
 }
 
-// ══════════════════════════════════════════════════════
-// EXTRACCIÓN REAL — Viví tu Suerte: una página por PROVINCIA
-// (vivitusuerte.com/pizarra/<slug>), con los 5 turnos y el
-// extracto completo de 20 números para cada uno. Cubre 22
-// jurisdicciones (antes solo teníamos 6 con Jugando Online).
-// ══════════════════════════════════════════════════════
 const PROV_URLS = {
   'Nacional':   'https://vivitusuerte.com/pizarra/ciudad',
   'Provincia':  'https://vivitusuerte.com/pizarra/provincia',
-  'Córdoba':    'https://vivitusuerte.com/pizarra/cordoba',
+  'Cordoba':    'https://vivitusuerte.com/pizarra/cordoba',
   'Santa Fe':   'https://vivitusuerte.com/pizarra/santa+fe',
-  'Entre Ríos': 'https://vivitusuerte.com/pizarra/entre+rios',
+  'Entre Rios': 'https://vivitusuerte.com/pizarra/entre+rios',
   'Uruguay':    'https://vivitusuerte.com/pizarra/montevideo',
   'Mendoza':    'https://vivitusuerte.com/pizarra/mendoza',
   'Corrientes': 'https://vivitusuerte.com/pizarra/corrientes',
   'Chaco':      'https://vivitusuerte.com/pizarra/chaco',
   'Santiago':   'https://vivitusuerte.com/pizarra/santiago',
-  'Neuquén':    'https://vivitusuerte.com/pizarra/neuquen',
+  'Neuquen':    'https://vivitusuerte.com/pizarra/neuquen',
   'San Luis':   'https://vivitusuerte.com/pizarra/san+luis',
   'Salta':      'https://vivitusuerte.com/pizarra/salta',
   'Jujuy':      'https://vivitusuerte.com/pizarra/jujuy',
-  'Tucumán':    'https://vivitusuerte.com/pizarra/tucuman',
+  'Tucuman':    'https://vivitusuerte.com/pizarra/tucuman',
   'Chubut':     'https://vivitusuerte.com/pizarra/chubut',
   'Formosa':    'https://vivitusuerte.com/pizarra/formosa',
   'Misiones':   'https://vivitusuerte.com/pizarra/misiones',
   'Catamarca':  'https://vivitusuerte.com/pizarra/catamarca',
   'San Juan':   'https://vivitusuerte.com/pizarra/san+juan',
   'La Rioja':   'https://vivitusuerte.com/pizarra/la+rioja',
-  'Río Negro':  'https://vivitusuerte.com/pizarra/rio+negro'
+  'Rio Negro':  'https://vivitusuerte.com/pizarra/rio+negro'
 };
 
 const SORTEO_NAMES = ['La Previa', 'Primera', 'Matutina', 'Vespertina', 'Nocturna'];
 const HEADER_RE = new RegExp('(' + SORTEO_NAMES.join('|') + ')', 'g');
-// "1. 1206" / "11. 1782" — posición + número de 4 cifras. Los sorteos que
-// todavía no salieron muestran "----" en vez de un número, y esa posición
-// simplemente no matchea (no hace falta filtrarla a mano).
 const POS_NUM_RE = /(\d{1,2})\.\s*(\d{4})\b/g;
 
 function parsearPaginaProvincia(texto, provApp, resultado) {
   const matches = [...texto.matchAll(HEADER_RE)];
   for (let i = 0; i < matches.length; i++) {
     const sorteo = matches[i][1];
-    if (resultado[sorteo][provApp]) continue; // ya lo tenemos (primera aparición = hoy)
+    if (resultado[sorteo][provApp]) continue;
 
     const inicio = matches[i].index + matches[i][0].length;
     const fin = i + 1 < matches.length ? matches[i + 1].index : texto.length;
@@ -203,7 +181,7 @@ function parsearPaginaProvincia(texto, provApp, resultado) {
       const pos = parseInt(posStr, 10);
       if (pos >= 1 && pos <= 20) arr[pos - 1] = num;
     }
-    if (arr[0] === null) continue; // sin cabeza todavía, no hay nada real que guardar
+    if (arr[0] === null) continue;
 
     resultado[sorteo][provApp] = { cabeza: arr[0], extracto: arr };
   }
@@ -227,35 +205,20 @@ async function scrapearProvincia(provApp, url, resultado) {
   }
 }
 
-// ══════════════════════════════════════════════════════
-// FUENTE DE RESPALDO — NotiTimba (www.notitimba.com/lots)
-// Página con URL FIJA (no cambia todos los días como Ámbito
-// o Cronista), con una tabla por turno y una columna por día.
-// Solo se usa para RELLENAR los huecos que deja la fuente
-// principal (vivitusuerte) — nunca pisa un dato que ya vino
-// bien de ahí. Solo trae la "cabeza" (no el extracto completo
-// de 20 números), pero es mejor que nada cuando la fuente
-// principal todavía no publicó ese sorteo.
-// ══════════════════════════════════════════════════════
 const NOTITIMBA_URL = 'https://www.notitimba.com/lots/';
 
-// Orden de las 5 tablas en la página, de arriba a abajo
-// (coincide con el desplegable del sitio: La previa, El
-// primero, Matutina, Vespertina, Nocturna).
 const NOTITIMBA_SORTEO_ORDEN = ['La Previa', 'Primera', 'Matutina', 'Vespertina', 'Nocturna'];
 
-// Nombre de la fila en la tabla -> nombre que usa nuestra app
 const NOTITIMBA_PROV_MAP = {
   'La Ciudad': 'Nacional',
   'La Provincia': 'Provincia',
   'Santa Fe': 'Santa Fe',
-  'Córdoba': 'Córdoba',
-  'Entre Ríos': 'Entre Ríos',
+  'Cordoba': 'Cordoba',
+  'Entre Rios': 'Entre Rios',
   'Montevideo': 'Uruguay',
 };
 
 function fechaHoyDDMM() {
-  // Fecha de hoy en horario Argentina, formato "DD/MM"
   const partes = new Intl.DateTimeFormat('es-AR', {
     timeZone: 'America/Argentina/Buenos_Aires',
     day: '2-digit',
@@ -273,4 +236,119 @@ async function rasparNotitimba(resultado) {
     const $ = cheerio.load(html);
     const hoyDDMM = fechaHoyDDMM();
 
-    // No confiamos en la posición fija de la
+    const tablasConDatos = $('table').filter((_, tabla) => {
+      const primerasCeldas = $(tabla).find('tr td:first-child, tr th:first-child')
+        .map((_, c) => $(c).text().trim()).get();
+      return primerasCeldas.some((txt) => NOTITIMBA_PROV_MAP[txt]);
+    });
+
+    NOTITIMBA_SORTEO_ORDEN.forEach((sorteo, idxTabla) => {
+      const tabla = tablasConDatos.eq(idxTabla);
+      if (!tabla.length) return;
+
+      const filas = tabla.find('tr');
+      if (!filas.length) return;
+
+      const encabezado = filas.eq(0).find('th,td');
+      let colHoy = -1;
+      encabezado.each((i, celda) => {
+        const txt = $(celda).text().trim();
+        if (txt.includes(hoyDDMM)) colHoy = i;
+      });
+      if (colHoy === -1) return;
+
+      filas.slice(1).each((i, fila) => {
+        const celdas = $(fila).find('th,td');
+        if (!celdas.length) return;
+        const nombreFila = $(celdas[0]).text().trim();
+        const provApp = NOTITIMBA_PROV_MAP[nombreFila];
+        if (!provApp) return;
+
+        if (resultado[sorteo][provApp]) return;
+
+        const valor = $(celdas[colHoy]).text().trim();
+        if (/^\d{4}$/.test(valor)) {
+          resultado[sorteo][provApp] = { cabeza: valor, extracto: null };
+        }
+      });
+    });
+  } catch (err) {
+    console.error('Error scrapeando fuente de respaldo (notitimba):', err.message);
+  }
+}
+
+async function scrapeQuiniela() {
+  const resultado = {};
+  SORTEO_NAMES.forEach((s) => (resultado[s] = {}));
+
+  await Promise.all(
+    Object.entries(PROV_URLS).map(([provApp, url]) => scrapearProvincia(provApp, url, resultado))
+  );
+
+  await rasparNotitimba(resultado);
+
+  const dataCabezas = {};
+  const dataExtractos = {};
+  Object.entries(resultado).forEach(([sorteo, provincias]) => {
+    dataCabezas[sorteo] = {};
+    dataExtractos[sorteo] = {};
+    Object.entries(provincias).forEach(([prov, info]) => {
+      dataCabezas[sorteo][prov] = info.cabeza;
+      dataExtractos[sorteo][prov] = info.extracto;
+    });
+  });
+
+  const tieneAlgunDato = Object.values(dataCabezas).some(
+    (prov) => Object.keys(prov).length > 0
+  );
+
+  if (tieneAlgunDato) {
+    await db.ref('resultados').set({ data: dataCabezas, timestamp: Date.now() });
+    await db.ref('extractos').set({ data: dataExtractos, timestamp: Date.now() });
+    await chequearYAvisar(dataCabezas);
+    await avisarleAlMotorSiHayNuevos(dataCabezas);
+  } else {
+    console.log('Scrape vacio, no se pisan los datos anteriores.');
+  }
+
+  return { cabezas: dataCabezas, extractos: dataExtractos };
+}
+
+app.get('/', async (req, res) => {
+  const data = await scrapeQuiniela();
+  if (data) {
+    res.json({ ok: true, data: data.cabezas, extractos: data.extractos });
+  } else {
+    res.status(500).json({ ok: false, error: 'Error al scrapear' });
+  }
+});
+
+app.get('/debug', async (req, res) => {
+  const salida = {};
+  for (const [provApp, url] of Object.entries(PROV_URLS)) {
+    try {
+      const response = await fetch(url, { headers: FETCH_HEADERS });
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      const text = $('body').text().replace(/\s+/g, ' ');
+      const matches = [...text.matchAll(HEADER_RE)];
+
+      salida[provApp] = {
+        status: response.status,
+        textLength: text.length,
+        sorteosEncontrados: matches.length,
+        titulosEncontrados: matches.map((m) => m[0]),
+        contextoPrimerSorteo: matches.length
+          ? text.slice(matches[0].index, matches[0].index + 200)
+          : null,
+        finalDeTexto: matches.length === 0 ? text.slice(-800) : null
+      };
+    } catch (err) {
+      salida[provApp] = { error: err.message };
+    }
+  }
+  res.json(salida);
+});
+
+app.listen(PORT, () => console.log('Puerto ' + PORT));
+    
