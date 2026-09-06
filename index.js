@@ -185,7 +185,14 @@ const HEADER_RE = new RegExp('(' + SORTEO_NAMES.join('|') + ')', 'g');
 // "1. 1206" / "11. 1782" — posición + número de 4 cifras. Los sorteos que
 // todavía no salieron muestran "----" en vez de un número, y esa posición
 // simplemente no matchea (no hace falta filtrarla a mano).
-const POS_NUM_RE = /(\d{1,2})\.\s*(\d{4})\b/g;
+const POS_NUM_RE = /(\d{1,2})\.\s*(\d{4,5})\b/g;
+
+// Algunos sorteos particulares (ej: Santa Fe Nocturna) publican 5 cifras en vez
+// de 4. Normalizamos siempre a 4 dígitos (los últimos 4), que es el formato
+// que usa el resto de la app.
+function normalizarNum(num) {
+  return num.length === 5 ? num.slice(-4) : num;
+}
 
 function parsearPaginaProvincia(texto, provApp, resultado) {
   const matches = [...texto.matchAll(HEADER_RE)];
@@ -201,7 +208,7 @@ function parsearPaginaProvincia(texto, provApp, resultado) {
     const arr = new Array(20).fill(null);
     for (const [, posStr, num] of pares) {
       const pos = parseInt(posStr, 10);
-      if (pos >= 1 && pos <= 20) arr[pos - 1] = num;
+      if (pos >= 1 && pos <= 20) arr[pos - 1] = normalizarNum(num);
     }
     if (arr[0] === null) continue; // sin cabeza todavía, no hay nada real que guardar
 
