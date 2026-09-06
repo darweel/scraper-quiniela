@@ -227,78 +227,50 @@ async function scrapearProvincia(provApp, url, resultado) {
   }
 }
 
-async function scrapeQuiniela() {
-  const resultado = {};
-  SORTEO_NAMES.forEach((s) => (resultado[s] = {}));
+// ══════════════════════════════════════════════════════
+// FUENTE DE RESPALDO — NotiTimba (www.notitimba.com/lots)
+// Página con URL FIJA (no cambia todos los días como Ámbito
+// o Cronista), con una tabla por turno y una columna por día.
+// Solo se usa para RELLENAR los huecos que deja la fuente
+// principal (vivitusuerte) — nunca pisa un dato que ya vino
+// bien de ahí. Solo trae la "cabeza" (no el extracto completo
+// de 20 números), pero es mejor que nada cuando la fuente
+// principal todavía no publicó ese sorteo.
+// ══════════════════════════════════════════════════════
+const NOTITIMBA_URL = 'https://www.notitimba.com/lots/';
 
-  await Promise.all(
-    Object.entries(PROV_URLS).map(([provApp, url]) => scrapearProvincia(provApp, url, resultado))
-  );
+// Orden de las 5 tablas en la página, de arriba a abajo
+// (coincide con el desplegable del sitio: La previa, El
+// primero, Matutina, Vespertina, Nocturna).
+const NOTITIMBA_SORTEO_ORDEN = ['La Previa', 'Primera', 'Matutina', 'Vespertina', 'Nocturna'];
 
-  const dataCabezas = {};
-  const dataExtractos = {};
-  Object.entries(resultado).forEach(([sorteo, provincias]) => {
-    dataCabezas[sorteo] = {};
-    dataExtractos[sorteo] = {};
-    Object.entries(provincias).forEach(([prov, info]) => {
-      dataCabezas[sorteo][prov] = info.cabeza;
-      dataExtractos[sorteo][prov] = info.extracto;
-    });
-  });
+// Nombre de la fila en la tabla -> nombre que usa nuestra app
+const NOTITIMBA_PROV_MAP = {
+  'La Ciudad': 'Nacional',
+  'La Provincia': 'Provincia',
+  'Santa Fe': 'Santa Fe',
+  'Córdoba': 'Córdoba',
+  'Entre Ríos': 'Entre Ríos',
+  'Montevideo': 'Uruguay',
+};
 
-  const tieneAlgunDato = Object.values(dataCabezas).some(
-    (prov) => Object.keys(prov).length > 0
-  );
-
-  if (tieneAlgunDato) {
-    await db.ref('resultados').set({ data: dataCabezas, timestamp: Date.now() });
-    await db.ref('extractos').set({ data: dataExtractos, timestamp: Date.now() });
-    await chequearYAvisar(dataCabezas);
-    await avisarleAlMotorSiHayNuevos(dataCabezas);
-  } else {
-    console.log('Scrape vacío, no se pisan los datos anteriores.');
-  }
-
-  return { cabezas: dataCabezas, extractos: dataExtractos };
+function fechaHoyDDMM() {
+  // Fecha de hoy en horario Argentina, formato "DD/MM"
+  const partes = new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    day: '2-digit',
+    month: '2-digit',
+  }).formatToParts(new Date());
+  const dia = partes.find((p) => p.type === 'day').value;
+  const mes = partes.find((p) => p.type === 'month').value;
+  return `${dia}/${mes}`;
 }
 
-app.get('/', async (req, res) => {
-  const data = await scrapeQuiniela();
-  if (data) {
-    res.json({ ok: true, data: data.cabezas, extractos: data.extractos });
-  } else {
-    res.status(500).json({ ok: false, error: 'Error al scrapear' });
-  }
-});
+async function rasparNotitimba(resultado) {
+  try {
+    const response = await fetch(NOTITIMBA_URL, { headers: FETCH_HEADERS });
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const hoyDDMM = fechaHoyDDMM();
 
-// ══════════════════════════════════════════════════════
-// DEBUG
-// ══════════════════════════════════════════════════════
-app.get('/debug', async (req, res) => {
-  const salida = {};
-  for (const [provApp, url] of Object.entries(PROV_URLS)) {
-    try {
-      const response = await fetch(url, { headers: FETCH_HEADERS });
-      const html = await response.text();
-      const $ = cheerio.load(html);
-      const text = $('body').text().replace(/\s+/g, ' ');
-      const matches = [...text.matchAll(HEADER_RE)];
-
-      salida[provApp] = {
-        status: response.status,
-        textLength: text.length,
-        sorteosEncontrados: matches.length,
-        titulosEncontrados: matches.map((m) => m[0]),
-        contextoPrimerSorteo: matches.length
-          ? text.slice(matches[0].index, matches[0].index + 200)
-          : null,
-        finalDeTexto: matches.length === 0 ? text.slice(-800) : null
-      };
-    } catch (err) {
-      salida[provApp] = { error: err.message };
-    }
-  }
-  res.json(salida);
-});
-
-app.listen(PORT, () => console.log('Puerto ' + PORT));
+    // No confiamos en la posición fija de la
