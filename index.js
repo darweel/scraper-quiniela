@@ -420,6 +420,83 @@ const FIREBASE_URL = 'https://senales-pro-default-rtdb.firebaseio.com';
 let cacheSugerencia = { numeros: [], texto: '', calculadoEn: 0 };
 const DOS_HORAS = 2 * 60 * 60 * 1000;
 
+// ══════════════════════════════════════════════════════
+// PROMPT — módulo de selección inteligente, cruce con
+// Compañeros del Sueño / repetición 3+ / Pendientes.
+// NOTA: la parte de "Pendientes" queda preparada pero sin
+// datos todavía — falta definir de dónde salen esos datos
+// (ver aviso en calcularSugerenciaIA).
+// ══════════════════════════════════════════════════════
+const PROMPT_BASE = `Sos el módulo de selección inteligente de Señales Pro.
+
+Tu función NO es predecir resultados de quiniela ni calcular probabilidades reales.
+Cada sorteo es independiente y ninguna señal, repetición, compañero o pendiente
+garantiza que un número vaya a salir.
+
+Debés seleccionar 3 números de TERMINACIÓN (00 a 99) utilizando exclusivamente
+los datos y señales que te proporciona el sistema.
+
+La selección debe basarse en el CRUCE de la metodología propia de Señales Pro,
+dando prioridad a la combinación de:
+
+1. COMPAÑEROS DEL SUEÑO:
+   Números relacionados mediante la base histórica propia de "Compañeros del
+   Sueño". Si una terminación señalada recientemente tiene compañeros presentes
+   en los datos recibidos, considerá ese vínculo como una señal de selección.
+
+2. REPETICIÓN 3+:
+   Cuando una terminación se haya repetido 3 o más veces durante la semana,
+   sus Compañeros del Sueño reciben prioridad dentro del análisis.
+
+3. PENDIENTES:
+   Considerá las terminaciones marcadas por el sistema como "Pendientes",
+   especialmente cuando también aparecen relacionadas con señales recientes o
+   con Compañeros del Sueño. (Si no se reciben datos de Pendientes, ignorá este punto.)
+
+4. HISTORIAL DE SEÑALES:
+   Utilizá las señales recientes únicamente como contexto para encontrar cruces
+   entre las tres fuentes anteriores. NO selecciones números simplemente porque
+   aparecieron más veces.
+
+REGLA PRINCIPAL:
+Un número debe recibir mayor valoración cuando exista una CONFLUENCIA de señales,
+por ejemplo:
+- aparece como compañero de una señal reciente;
+- además está relacionado con una terminación que tuvo repetición 3+;
+- además figura como pendiente;
+- o reúne varias de estas condiciones.
+
+No inventes compañeros, pendientes, frecuencias ni relaciones que no estén
+presentes en los datos proporcionados.
+
+No utilices conocimiento externo sobre quiniela.
+No afirmes que un número tiene mayor probabilidad estadística de salir.
+No uses expresiones como "seguro", "va a salir", "probable", "garantizado",
+"número ganador" o equivalentes.
+
+Tu tarea es únicamente RANKEAR las terminaciones según la CONFLUENCIA de señales
+del método propio proporcionado por el backend.
+
+Si existen más de 3 candidatos, elegí los 3 con mayor confluencia y respaldo
+dentro de los datos.
+
+Si dos candidatos tienen una valoración similar, priorizá:
+1. mayor cantidad de tipos de señales coincidentes;
+2. luego mayor respaldo de Compañeros del Sueño;
+3. luego mayor presencia entre las señales recientes.
+
+IMPORTANTE:
+El resultado es una SUGERENCIA DE ANÁLISIS basada en el método propio de
+Señales Pro. No representa una predicción ni una probabilidad matemática de
+aparición.
+
+RESPONDÉ ÚNICAMENTE con este formato exacto:
+
+NUMEROS: XX,YY,ZZ
+
+Donde XX, YY y ZZ son terminaciones de dos dígitos, siempre entre 00 y 99.
+No agregues explicación, texto, porcentajes ni símbolos adicionales.`;
+
 async function obtenerHistorialReciente() {
   const resp = await fetch(FIREBASE_URL + '/historialPermanente.json');
   if (!resp.ok) return {};
@@ -438,6 +515,26 @@ function ultimosNDias(historial, n) {
   return numeros;
 }
 
+// Cruza las señales recientes contra la base de Compañeros del Sueño,
+// consultando el motor (senales-pro-engine) que ya tiene esa lógica —
+// así no duplicamos la base secreta acá en el scraper.
+async function obtenerCruceCompanieros(numeros) {
+  if (!MOTOR_URL) return [];
+  try {
+    const resp = await fetch(MOTOR_URL + '/api/motor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ todos: numeros, activos: numeros, extra: [] }),
+    });
+    if (!resp.ok) return [];
+    const datos = await resp.json();
+    return (datos.coincidencias && datos.coincidencias.tabla) || [];
+  } catch (err) {
+    console.error('Error consultando al motor para la Sugerencia de IA:', err.message);
+    return [];
+  }
+}
+
 async function calcularSugerenciaIA() {
   const historial = await obtenerHistorialReciente();
   const numeros = ultimosNDias(historial, 14);
@@ -447,17 +544,37 @@ async function calcularSugerenciaIA() {
     return { numeros: [], texto: 'Todavía no hay suficiente historial guardado.' };
   }
 
-  const prompt =
-    'Sos un asistente que analiza frecuencias de números de quiniela (00 a 99). ' +
-    'Te paso una lista de números que salieron marcados como señal en los últimos 14 días. ' +
-    'Elegí los 3 números que más se repiten o que muestran un patrón de frecuencia más fuerte. ' +
-    'Respondé SOLO con este formato exacto, sin explicación adicional:\n' +
-    'NUMEROS: XX,YY,ZZ\n' +
-    'Lista: ' + numeros.join(',');
+  // Repetición 3+ durante la semana (últimos 7 días)
+  const numerosSemana = ultimosNDias(historial, 7);
+  const conteoSemana = {};
+  numerosSemana.forEach(function (n) { conteoSemana[n] = (conteoSemana[n] || 0) + 1; });
+  const repetidos3mas = Object.keys(conteoSemana).filter(function (n) { return conteoSemana[n] >= 3; });
+
+  // Cruce real con Compañeros del Sueño (vía el motor)
+  const tablaCruce = await obtenerCruceCompanieros(numeros);
+
+  if (tablaCruce.length === 0) {
+    return { numeros: [], texto: 'Todavía no hay suficiente cruce de datos para sugerir.' };
+  }
+
+  // TODO: sumar acá los datos de "Pendientes" cuando Dardo confirme
+  // de dónde salen (endpoint del motor / nodo de Firebase / otro).
+  const candidatos = tablaCruce.slice(0, 15).map(function (c) {
+    return {
+      numero: c.num,
+      vecesComoCompanero: c.veces,
+      respaldoTotal: c.suma,
+      origenSeñales: c.origen,
+      esFavorito: c.esFav,
+      repetido3MasEnLaSemana: repetidos3mas.indexOf(c.num) >= 0,
+    };
+  });
+
+  const prompt = PROMPT_BASE + '\n\nDATOS:\n' + JSON.stringify(candidatos);
 
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 100,
+    max_tokens: 200,
     messages: [{ role: 'user', content: prompt }],
   });
 
@@ -473,7 +590,7 @@ async function calcularSugerenciaIA() {
     return String(n).padStart(2, '0');
   });
 
-  return { numeros: numerosFinal, texto: 'Sugerencia basada en los últimos 14 días.' };
+  return { numeros: numerosFinal, texto: 'Sugerencia según cruce de señales y método propio.' };
 }
 
 app.get('/sugerencia-ia', async (req, res) => {
