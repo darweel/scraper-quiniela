@@ -405,4 +405,90 @@ app.get('/debug', async (req, res) => {
   res.json(salida);
 });
 
+// ══════════════════════════════════════════════════════
+// SUGERENCIA DE IA — 3 números sugeridos según el
+// historial de señales activas de los últimos 14 días.
+// Requiere la variable de entorno ANTHROPIC_API_KEY.
+// ══════════════════════════════════════════════════════
+const Anthropic = require('@anthropic-ai/sdk');
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const FIREBASE_URL = 'https://senales-pro-default-rtdb.firebaseio.com';
+
+// Guarda la última sugerencia en memoria para no llamar a la IA
+// en cada visita — se recalcula solo si pasaron más de 2 horas.
+let cacheSugerencia = { numeros: [], texto: '', calculadoEn: 0 };
+const DOS_HORAS = 2 * 60 * 60 * 1000;
+
+async function obtenerHistorialReciente() {
+  const resp = await fetch(FIREBASE_URL + '/historialPermanente.json');
+  if (!resp.ok) return {};
+  const datos = await resp.json();
+  return datos || {};
+}
+
+function ultimosNDias(historial, n) {
+  const claves = Object.keys(historial).sort().reverse().slice(0, n);
+  const numeros = [];
+  claves.forEach(function (dia) {
+    Object.values(historial[dia] || {}).forEach(function (reg) {
+      if (reg && reg.term) numeros.push(reg.term);
+    });
+  });
+  return numeros;
+}
+
+async function calcularSugerenciaIA() {
+  const historial = await obtenerHistorialReciente();
+  const numeros = ultimosNDias(historial, 14);
+
+  if (numeros.length < 5) {
+    // No hay suficiente data guardada todavía
+    return { numeros: [], texto: 'Todavía no hay suficiente historial guardado.' };
+  }
+
+  const prompt =
+    'Sos un asistente que analiza frecuencias de números de quiniela (00 a 99). ' +
+    'Te paso una lista de números que salieron marcados como señal en los últimos 14 días. ' +
+    'Elegí los 3 números que más se repiten o que muestran un patrón de frecuencia más fuerte. ' +
+    'Respondé SOLO con este formato exacto, sin explicación adicional:\n' +
+    'NUMEROS: XX,YY,ZZ\n' +
+    'Lista: ' + numeros.join(',');
+
+  const msg = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 100,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const texto = msg.content
+    .filter(function (b) { return b.type === 'text'; })
+    .map(function (b) { return b.text; })
+    .join('');
+
+  const match = texto.match(/NUMEROS:\s*(\d{1,2}),\s*(\d{1,2}),\s*(\d{1,2})/i);
+  if (!match) return { numeros: [], texto: 'No se pudo interpretar la respuesta de la IA.' };
+
+  const numerosFinal = [match[1], match[2], match[3]].map(function (n) {
+    return String(n).padStart(2, '0');
+  });
+
+  return { numeros: numerosFinal, texto: 'Sugerencia basada en los últimos 14 días.' };
+}
+
+app.get('/sugerencia-ia', async (req, res) => {
+  try {
+    const ahora = Date.now();
+    if (ahora - cacheSugerencia.calculadoEn < DOS_HORAS && cacheSugerencia.numeros.length > 0) {
+      return res.json(cacheSugerencia);
+    }
+    const resultado = await calcularSugerenciaIA();
+    cacheSugerencia = Object.assign({}, resultado, { calculadoEn: ahora });
+    res.json(cacheSugerencia);
+  } catch (e) {
+    console.error('Error en /sugerencia-ia:', e);
+    res.status(500).json({ numeros: [], texto: 'Error al calcular la sugerencia.' });
+  }
+});
+
 app.listen(PORT, () => console.log('Puerto ' + PORT));
