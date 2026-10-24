@@ -38,20 +38,39 @@ function guardarSubs(subs) {
   fs.writeFileSync(SUBS_FILE, JSON.stringify(subs, null, 2));
 }
 
+// Las suscripciones ahora se guardan TAMBIÉN en Firebase (/pushSubs).
+// El archivo local de Render se borra cada vez que el servicio se duerme
+// o reinicia — por eso antes las notificaciones dejaban de llegar.
+const crypto = require('crypto');
+function idSub(sub) {
+  return crypto.createHash('sha1').update(String(sub && sub.endpoint)).digest('hex');
+}
+
 app.post('/subscribe', async (req, res) => {
   const sub = req.body;
+  if (!sub || !sub.endpoint) return res.status(400).json({ ok: false });
   const subs = cargarSubs();
   if (!subs.some((s) => s.endpoint === sub.endpoint)) { subs.push(sub); guardarSubs(subs); }
+  try { await db.ref('pushSubs/' + idSub(sub)).set({ sub, alta: Date.now() }); }
+  catch (e) { console.error('No se pudo guardar la suscripción en Firebase:', e.message); }
   res.status(201).json({ ok: true });
 });
 
 async function enviarPush(titulo, cuerpo) {
-  const subs = cargarSubs();
+  const porEndpoint = {};
+  cargarSubs().forEach((s) => { if (s && s.endpoint) porEndpoint[s.endpoint] = s; });
+  try {
+    const snap = await db.ref('pushSubs').once('value');
+    Object.values(snap.val() || {}).forEach((x) => { if (x && x.sub && x.sub.endpoint) porEndpoint[x.sub.endpoint] = x.sub; });
+  } catch (e) { console.error('No se pudieron leer las suscripciones de Firebase:', e.message); }
   const payload = JSON.stringify({ title: titulo, body: cuerpo, url: '/' });
   const vivas = [];
-  for (const sub of subs) {
+  for (const sub of Object.values(porEndpoint)) {
     try { await webpush.sendNotification(sub, payload); vivas.push(sub); }
-    catch (e) { if (e.statusCode !== 410 && e.statusCode !== 404) vivas.push(sub); }
+    catch (e) {
+      if (e.statusCode !== 410 && e.statusCode !== 404) vivas.push(sub);
+      else { try { await db.ref('pushSubs/' + idSub(sub)).remove(); } catch (e2) {} }
+    }
   }
   guardarSubs(vivas);
 }
@@ -93,6 +112,9 @@ async function chequearYAvisar(sorteos) {
 // solo que sin avisarle al motor nuevo (no rompe nada viejo).
 // ══════════════════════════════════════════════════════
 const MOTOR_URL = process.env.MOTOR_URL || null;
+
+// Jugada del día en el servidor (ver jugadas.js)
+const jugadas = require('./jugadas.js')({ db, fetch, enviarPush, motorUrl: MOTOR_URL });
 let previoCabezas = {}; // snapshot del último scrape, para detectar qué es realmente nuevo
 let diaActual = new Date().toLocaleDateString('es-AR');
 
@@ -368,10 +390,28 @@ async function scrapeQuiniela() {
 
 app.get('/', async (req, res) => {
   const data = await scrapeQuiniela();
+  // Procesa la Jugada del día de fondo (no demora la respuesta al celular)
+  jugadas.procesar(data && data.cabezas).catch((e) => console.error('jugadas:', e.message));
   if (data) {
     res.json({ ok: true, data: data.cabezas, extractos: data.extractos });
   } else {
     res.status(500).json({ ok: false, error: 'Error al scrapear' });
+  }
+});
+
+// ══════════════════════════════════════════════════════
+// TICK — lo llama cron-job.org cada 5 minutos. Mantiene despierto
+// el servicio, scrapea y procesa la Jugada del día aunque no haya
+// ningún celular con la app abierta.
+// ══════════════════════════════════════════════════════
+app.get('/tick', async (req, res) => {
+  try {
+    const data = await scrapeQuiniela();
+    const r = await jugadas.procesar(data && data.cabezas);
+    res.json(r);
+  } catch (e) {
+    console.error('Error en /tick:', e);
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
